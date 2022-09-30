@@ -7,7 +7,7 @@ import (
 
 	"github.com/Shopify/ghostferry"
 	"github.com/Shopify/ghostferry/testhelpers"
-	"github.com/siddontang/go-mysql/schema"
+	"github.com/go-mysql-org/go-mysql/schema"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -243,7 +243,7 @@ func TestVerificationPasses(t *testing.T) {
 func setupIterativeVerifierFromFerry(v *ghostferry.IterativeVerifier, f *ghostferry.Ferry) {
 	v.CursorConfig = &ghostferry.CursorConfig{
 		DB:          f.SourceDB,
-		BatchSize:   f.Config.DataIterationBatchSize,
+		BatchSize:   &f.Config.UpdatableConfig.DataIterationBatchSize,
 		ReadRetries: f.Config.DBReadRetries,
 	}
 

@@ -10,9 +10,9 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/siddontang/go-mysql/mysql"
-	"github.com/siddontang/go-mysql/replication"
-	"github.com/siddontang/go-mysql/schema"
+	"github.com/go-mysql-org/go-mysql/mysql"
+	"github.com/go-mysql-org/go-mysql/replication"
+	"github.com/go-mysql-org/go-mysql/schema"
 )
 
 var annotationRegex = regexp.MustCompile(`^/\*(.*?)\*/`)
@@ -36,17 +36,17 @@ type RowData []interface{}
 //
 // At some point, this code was refactored into this function, such that the
 // BinlogStreamer also uses the same code to decode integers. The binlog data is
-// given to us by siddontang/go-mysql. The siddontang/go-mysql library should
+// given to us by go-mysql-org/go-mysql. The go-mysql-org/go-mysql library should
 // not be giving us awkward byte slices. Instead, it should properly gives us
 // uint64. This code thus panics when it encounters such case. See
 // https://github.com/Shopify/ghostferry/issues/165.
 //
 // In summary:
 // - This code receives values from both go-sql-driver/mysql and
-//   siddontang/go-mysql.
+//   go-mysql-org/go-mysql.
 // - go-sql-driver/mysql gives us int64 for signed integer, and uint64 in a byte
 //   slice for unsigned integer.
-// - siddontang/go-mysql gives us int64 for signed integer, and uint64 for
+// - go-mysql-org/go-mysql gives us int64 for signed integer, and uint64 for
 //   unsigned integer.
 // - We currently make this function deal with both cases. In the future we can
 //   investigate alternative solutions.
@@ -426,9 +426,21 @@ func appendEscapedValue(buffer []byte, value interface{}, column schema.TableCol
 
 	switch v := value.(type) {
 	case string:
-		return appendEscapedString(buffer, v)
+		// since https://github.com/go-mysql-org/go-mysql/pull/658/files merged, go-mysql returns JSON events as a string, but we would prefer them as []byte for consistency with other types
+		if column.Type == schema.TYPE_JSON {
+			return appendEscapedBuffer(buffer, []byte(v), true)
+		}
+		var rightPadLengthForBinaryColumn int = 0
+		// see appendEscapedString() for details why we need special
+		// handling of BINARY column types
+		if column.Type == schema.TYPE_BINARY {
+			rightPadLengthForBinaryColumn = int(column.FixedSize)
+		}
+
+		return appendEscapedString(buffer, v, rightPadLengthForBinaryColumn)
 	case []byte:
-		return appendEscapedBuffer(buffer, v, column.Type == schema.TYPE_JSON)
+		// schema type cannot be JSON at this point because all JSON results are strings
+		return appendEscapedBuffer(buffer, v, false)
 	case bool:
 		if v {
 			return append(buffer, '1')
@@ -440,7 +452,7 @@ func appendEscapedValue(buffer []byte, value interface{}, column schema.TableCol
 	case float32:
 		return strconv.AppendFloat(buffer, float64(v), 'g', -1, 64)
 	case decimal.Decimal:
-		return appendEscapedString(buffer, v.String())
+		return appendEscapedString(buffer, v.String(), 0)
 	default:
 		panic(fmt.Sprintf("unsupported type %t", value))
 	}
@@ -484,10 +496,25 @@ func Int64Value(value interface{}) (int64, bool) {
 //
 // ref: https://github.com/mysql/mysql-server/blob/mysql-5.7.5/mysys/charset.c#L963-L1038
 // ref: https://github.com/go-sql-driver/mysql/blob/9181e3a86a19bacd63e68d43ae8b7b36320d8092/utils.go#L717-L758
-func appendEscapedString(buffer []byte, value string) []byte {
+//
+// We also need to support right-padding of the generated string using 0-bytes
+// to mimic what a MySQL server would do for BINARY columns (with fixed length).
+//
+// ref: https://github.com/Shopify/ghostferry/pull/159
+//
+// This is specifically mentioned in the the below link:
+//
+//    When BINARY values are stored, they are right-padded with the pad value
+//    to the specified length. The pad value is 0x00 (the zero byte). Values
+//    are right-padded with 0x00 for inserts, and no trailing bytes are removed
+//    for retrievals.
+//
+// ref: https://dev.mysql.com/doc/refman/5.7/en/binary-varbinary.html
+func appendEscapedString(buffer []byte, value string, rightPadToLengthWithZeroBytes int) []byte {
 	buffer = append(buffer, '\'')
 
-	for i := 0; i < len(value); i++ {
+	var i int
+	for i = 0; i < len(value); i++ {
 		c := value[i]
 		if c == '\'' {
 			buffer = append(buffer, '\'', '\'')
@@ -496,7 +523,20 @@ func appendEscapedString(buffer []byte, value string) []byte {
 		}
 	}
 
+	// continue 0-padding up to the desired length as provided by the
+	// caller
+	if i < rightPadToLengthWithZeroBytes {
+		buffer = rightPadBufferWithZeroBytes(buffer, rightPadToLengthWithZeroBytes-i)
+	}
+
 	return append(buffer, '\'')
+}
+
+func rightPadBufferWithZeroBytes(buffer []byte, padLength int) []byte {
+	for i := 0; i < padLength; i++ {
+		buffer = append(buffer, '\x00')
+	}
+	return buffer
 }
 
 func appendEscapedBuffer(buffer, value []byte, isJSON bool) []byte {

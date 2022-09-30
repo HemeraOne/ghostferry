@@ -1,4 +1,4 @@
-name: Ghostferry tests
+name: Ghostferry MySQL 8.0 tests
 
 on:
   push:
@@ -12,6 +12,7 @@ jobs:
     timeout-minutes: 15
     env:
       CI: "true"
+      MYSQL_VERSION: "8.0"
     steps:
       - uses: actions/checkout@v2
 
@@ -30,6 +31,7 @@ jobs:
     timeout-minutes: 15
     env:
       CI: "true"
+      MYSQL_VERSION: "8.0"
     steps:
       - uses: actions/checkout@v2
 
@@ -49,6 +51,7 @@ jobs:
     env:
       CI: "true"
       BUNDLE_WITHOUT: "development"
+      MYSQL_VERSION: "8.0"
     steps:
       - uses: actions/checkout@v2
 
