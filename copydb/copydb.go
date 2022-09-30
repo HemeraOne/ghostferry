@@ -11,9 +11,8 @@ import (
 )
 
 type CopydbFerry struct {
-	Ferry         *ghostferry.Ferry
-	controlServer *ghostferry.ControlServer
-	config        *Config
+	Ferry  *ghostferry.Ferry
+	config *Config
 }
 
 func NewFerry(config *Config) *CopydbFerry {
@@ -21,17 +20,9 @@ func NewFerry(config *Config) *CopydbFerry {
 		Config: config.Config,
 	}
 
-	controlServer := &ghostferry.ControlServer{
-		F:             ferry,
-		Addr:          config.ServerBindAddr,
-		Basedir:       config.WebBasedir,
-		CustomScripts: config.ControlServerCustomScripts,
-	}
-
 	return &CopydbFerry{
-		Ferry:         ferry,
-		controlServer: controlServer,
-		config:        config,
+		Ferry:  ferry,
+		config: config,
 	}
 }
 
@@ -43,14 +34,7 @@ func (this *CopydbFerry) Initialize() error {
 		}
 	}
 
-	err := this.Ferry.Initialize()
-	if err != nil {
-		return err
-	}
-
-	this.controlServer.Verifier = this.Ferry.Verifier
-
-	return this.controlServer.Initialize()
+	return this.Ferry.Initialize()
 }
 
 func (this *CopydbFerry) Start() error {
@@ -81,10 +65,6 @@ func (this *CopydbFerry) CreateDatabasesAndTables() error {
 }
 
 func (this *CopydbFerry) Run() {
-	serverWG := &sync.WaitGroup{}
-	serverWG.Add(1)
-	go this.controlServer.Run(serverWG)
-
 	copyWG := &sync.WaitGroup{}
 	copyWG.Add(1)
 	go func() {
@@ -121,16 +101,12 @@ func (this *CopydbFerry) Run() {
 	this.Ferry.EndCutover(cutoverStart)
 
 	// This is where you cutover from using the source database to
-	// using the target database.
+	// using the target database
+
 	logrus.Info("ghostferry main operations has terminated but the control server remains online")
 	logrus.Info("press CTRL+C or send an interrupt to stop the control server and end this process")
 
-	// Work is done, the process will run the web server until killed.
-	serverWG.Wait()
-}
-
-func (this *CopydbFerry) ShutdownControlServer() error {
-	return this.controlServer.Shutdown()
+	this.Ferry.ControlServer.Wait()
 }
 
 func (this *CopydbFerry) initializeWaitUntilReplicaIsCaughtUpToMasterConnection() error {
@@ -160,12 +136,28 @@ func (this *CopydbFerry) initializeWaitUntilReplicaIsCaughtUpToMasterConnection(
 }
 
 func (this *CopydbFerry) createDatabaseIfExistsOnTarget(database string) error {
+	var originalDatabaseName, createDatabaseQuery string
+	r := this.Ferry.SourceDB.QueryRow(fmt.Sprintf("SHOW CREATE DATABASE `%s`", database))
+	err := r.Scan(&originalDatabaseName, &createDatabaseQuery)
+	if err != nil {
+		logrus.WithFields(logrus.Fields{
+			"error":    err,
+			"database": database,
+		}).Error("unable to show create database on source")
+		return err
+	}
+
 	if targetDbName, exists := this.Ferry.DatabaseRewrites[database]; exists {
 		database = targetDbName
 	}
 
-	createDatabaseQuery := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
-	_, err := this.Ferry.TargetDB.Exec(createDatabaseQuery)
+	createDatabaseQuery = strings.Replace(
+		createDatabaseQuery,
+		fmt.Sprintf("CREATE DATABASE `%s`", originalDatabaseName),
+		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database),
+		1,
+	)
+	_, err = this.Ferry.TargetDB.Exec(createDatabaseQuery)
 	return err
 }
 

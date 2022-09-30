@@ -17,9 +17,11 @@ import (
 
 	sql "github.com/Shopify/ghostferry/sqlwrapper"
 
+	_ "net/http/pprof"
+
+	siddontangmysql "github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-sql-driver/mysql"
 	siddontanglog "github.com/siddontang/go-log/log"
-	siddontangmysql "github.com/siddontang/go-mysql/mysql"
 	"github.com/sirupsen/logrus"
 )
 
@@ -53,6 +55,8 @@ type Ferry struct {
 
 	SourceDB *sql.DB
 	TargetDB *sql.DB
+
+	ControlServer *ControlServer
 
 	BinlogStreamer *BinlogStreamer
 	BinlogWriter   *BinlogWriter
@@ -102,7 +106,7 @@ func (f *Ferry) NewDataIterator() *DataIterator {
 			DB:        f.SourceDB,
 			Throttler: f.Throttler,
 
-			BatchSize:                 f.Config.DataIterationBatchSize,
+			BatchSize:                 &f.Config.UpdatableConfig.DataIterationBatchSize,
 			BatchSizePerTableOverride: f.Config.DataIterationBatchSizePerTableOverride,
 			ReadRetries:               f.Config.DBReadRetries,
 		},
@@ -245,6 +249,22 @@ func (f *Ferry) NewInlineVerifier() *InlineVerifier {
 	}
 }
 
+func (f *Ferry) NewControlServer() (*ControlServer, error) {
+	f.ensureInitialized()
+
+	controlServer := &ControlServer{
+		Config:   f.Config.ControlServerConfig,
+		F:        f,
+		Verifier: f.Verifier,
+	}
+
+	err := controlServer.Initialize()
+	if err != nil {
+		return nil, err
+	}
+	return controlServer, nil
+}
+
 func (f *Ferry) NewInlineVerifierWithoutStateTracker() *InlineVerifier {
 	v := f.NewInlineVerifier()
 	v.StateTracker = nil
@@ -284,7 +304,7 @@ func (f *Ferry) NewIterativeVerifier() (*IterativeVerifier, error) {
 	v := &IterativeVerifier{
 		CursorConfig: &CursorConfig{
 			DB:                        f.SourceDB,
-			BatchSize:                 f.Config.DataIterationBatchSize,
+			BatchSize:                 &f.Config.UpdatableConfig.DataIterationBatchSize,
 			BatchSizePerTableOverride: f.Config.DataIterationBatchSizePerTableOverride,
 			ReadRetries:               f.Config.DBReadRetries,
 		},
@@ -337,7 +357,7 @@ func (f *Ferry) Initialize() (err error) {
 		}
 	}
 
-	// Suppress siddontang/go-mysql logging as we already log the equivalents.
+	// Suppress go-mysql-org/go-mysql logging as we already log the equivalents.
 	// It also by defaults logs to stdout, which is different from Ghostferry
 	// logging, which all goes to stderr. stdout in Ghostferry is reserved for
 	// dumping states due to an abort.
@@ -537,6 +557,13 @@ func (f *Ferry) Initialize() (err error) {
 		}
 	}
 
+	if f.Config.ControlServerConfig.Enabled {
+		f.ControlServer, err = f.NewControlServer()
+		if err != nil {
+			return err
+		}
+	}
+
 	f.logger.Info("ferry initialized")
 	return nil
 }
@@ -611,6 +638,15 @@ func (f *Ferry) Run() {
 	f.logger.Info("starting ferry run")
 	f.OverallState.Store(StateCopying)
 
+	if f.Config.EnablePProf {
+		go func() {
+			err := http.ListenAndServe("localhost:6060", nil)
+			if err != nil {
+				f.logger.WithError(err).Warn("pprof server finished")
+			}
+		}()
+	}
+
 	ctx, shutdown := context.WithCancel(context.Background())
 
 	handleError := func(name string, err error) {
@@ -626,6 +662,10 @@ func (f *Ferry) Run() {
 		defer supportingServicesWg.Done()
 		handleError("throttler", f.Throttler.Run(ctx))
 	}()
+
+	if f.Config.ControlServerConfig.Enabled {
+		go f.ControlServer.Run()
+	}
 
 	if f.Config.ProgressCallback.URI != "" {
 		supportingServicesWg.Add(1)
@@ -783,6 +823,7 @@ func (f *Ferry) Run() {
 	binlogWg.Wait()
 
 	f.logger.Info("ghostferry run is complete, shutting down auxiliary services")
+
 	f.OverallState.Store(StateDone)
 	f.DoneTime = time.Now()
 
@@ -1035,13 +1076,14 @@ func (f *Ferry) ReportState() {
 	callback := f.Config.StateCallback
 	state, err := f.SerializeStateToJSON()
 	if err != nil {
-		f.logger.Panicf("failed to serialize state to JSON: %s", err)
+		f.logger.WithError(err).Error("failed to serialize state to JSON")
+		return
 	}
 
 	callback.Payload = string(state)
 	err = callback.Post(&http.Client{})
 	if err != nil {
-		f.logger.Panicf("failed to post state to callback: %s with err: %s", callback, err)
+		f.logger.WithError(err).Errorf("failed to post state to callback %s", callback.URI)
 	}
 }
 

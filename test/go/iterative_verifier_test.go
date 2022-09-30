@@ -10,7 +10,7 @@ import (
 
 	"github.com/Shopify/ghostferry"
 	"github.com/Shopify/ghostferry/testhelpers"
-	"github.com/siddontang/go-mysql/schema"
+	"github.com/go-mysql-org/go-mysql/schema"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -40,7 +40,7 @@ func (t *IterativeVerifierTestSuite) SetupTest() {
 		CompressionVerifier: compressionVerifier,
 		CursorConfig: &ghostferry.CursorConfig{
 			DB:          t.Ferry.SourceDB,
-			BatchSize:   t.Ferry.Config.DataIterationBatchSize,
+			BatchSize:   &t.Ferry.Config.UpdatableConfig.DataIterationBatchSize,
 			ReadRetries: t.Ferry.Config.DBReadRetries,
 		},
 		BinlogStreamer: t.Ferry.BinlogStreamer,

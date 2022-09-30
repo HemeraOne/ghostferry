@@ -13,7 +13,7 @@ import (
 	sql "github.com/Shopify/ghostferry/sqlwrapper"
 
 	sq "github.com/Masterminds/squirrel"
-	"github.com/siddontang/go-mysql/schema"
+	"github.com/go-mysql-org/go-mysql/schema"
 	"github.com/sirupsen/logrus"
 )
 
@@ -435,7 +435,7 @@ func (v *IterativeVerifier) iterateTableFingerprints(table *TableSchema, mismatc
 }
 
 func (v *IterativeVerifier) verifyStore(sourceTag string, additionalTags []MetricTag) (VerificationResult, error) {
-	allBatches := v.reverifyStore.FlushAndBatchByTable(int(v.CursorConfig.BatchSize))
+	allBatches := v.reverifyStore.FlushAndBatchByTable(int(*v.CursorConfig.BatchSize))
 	v.logger.WithField("batches", len(allBatches)).Debug("reverifying")
 
 	if len(allBatches) == 0 {

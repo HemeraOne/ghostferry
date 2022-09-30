@@ -2,9 +2,10 @@ package test
 
 import (
 	"fmt"
-	sql "github.com/Shopify/ghostferry/sqlwrapper"
 	"testing"
 	"time"
+
+	sql "github.com/Shopify/ghostferry/sqlwrapper"
 
 	"github.com/Shopify/ghostferry"
 	"github.com/Shopify/ghostferry/testhelpers"
@@ -145,7 +146,7 @@ func TestOnlyDeleteRowWithMaxPaginationKey(t *testing.T) {
 		Ferry: testhelpers.NewTestFerry(),
 	}
 
-	testcase.Ferry.DataIterationBatchSize = 1
+	testcase.Ferry.UpdatableConfig.DataIterationBatchSize = 1
 
 	lastRowDeleted := false
 	testcase.Ferry.BeforeBatchCopyListener = func(batch *ghostferry.RowBatch) error {
