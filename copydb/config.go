@@ -77,6 +77,9 @@ type Config struct {
 	// This allows pre-existing tables on your target, schemas and data compatibility won't be validated.
 	// Use at your own risk.
 	AllowExistingTargetTable bool
+
+	//Exit the ferry after its done, avoids that you have to CTRL+C
+	ExitFerryWhenDone bool
 }
 
 func (c *Config) InitializeAndValidateConfig() error {
