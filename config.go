@@ -796,6 +796,9 @@ type Config struct {
 	ServerBindAddr             string              // replaced by ControlServerConfig.ServerBindAddr
 	WebBasedir                 string              // replaced by ControlServerConfig.WebBasedir
 	ControlServerCustomScripts map[string][]string // replaced by ControlServerConfig.CustomScripts
+
+	//Exit the ferry after its done, avoids that you have to CTRL+C
+	ExitFerryWhenDone bool
 }
 
 func (c *Config) ValidateConfig() error {
